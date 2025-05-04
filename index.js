@@ -36,13 +36,13 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
         // Привязка ролей к файлам
         const roleAudioMap = {
-            'Микола': 'kolya.mp3',
-            'Бодя': 'bodya.mp3',
-            'Єгор': 'egor.mp3',
-            'Славік': 'slavik.mp3',
-            'Вадік': 'vadik.mp3',
-            'Діма': 'dima.mp3',
-            'Даня': 'danya.mp3',
+            'Микола': 'kolya.ogg',
+            'Бодя': 'bodya.ogg',
+            'Єгор': 'egor.ogg',
+            'Славік': 'slavik.ogg',
+            'Вадік': 'vadik.ogg',
+            'Діма': 'dima.ogg',
+            'Даня': 'danya.ogg',
         };
 
         let audioFile = null;
