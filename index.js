@@ -38,7 +38,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         const roleAudioMap = {
             'Мікола': 'kolya.mp3',
             'Бодя': 'bodya.mp3',
-            'Єгор': 'egor.mp3',
+            'Егор': 'egor.mp3',
             'Славік': 'slavik.mp3',
             'Вадік': 'vadik.mp3',
             'Діма': 'dima.mp3',
