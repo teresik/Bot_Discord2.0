@@ -24,14 +24,19 @@ const client = new Client({
 // ========== SLASH-КОМАНДА /clean ==========
 const commands = [
     new SlashCommandBuilder()
-        .setName('addvoice')
-        .setDescription('🎧 Прив’язати звук до своєї ролі')
-        .addStringOption(option =>
-            option.setName('роль')
-                .setDescription('Назва ролі, до якої прив’язати звук')
-                .setRequired(true)
-        )
-        .toJSON(),
+    .setName('addvoice')
+    .setDescription('🎧 Прив\'язати звук до своєї ролі')
+    .addStringOption(option =>
+        option.setName('роль')
+            .setDescription('Назва ролі, до якої прив\'язати звук')
+            .setRequired(true)
+    )
+    .addAttachmentOption(option => 
+        option.setName('файл')
+            .setDescription('Аудіофайл (.mp3 або .ogg)')
+            .setRequired(true)
+    )
+    .toJSON(),
 ];
 
 // ========== ПРИ ЗАПУСКУ ==========
@@ -254,6 +259,65 @@ client.on('interactionCreate', async interaction => {
         } catch (err) {
             console.error('❌ Помилка очищення:', err);
             await interaction.editReply('❌ Сталася помилка при очищенні.');
+        }
+    }
+    
+    // Доданий обробник команди addvoice
+    else if (interaction.commandName === 'addvoice') {
+        const roleName = interaction.options.getString('роль');
+        const member = interaction.member;
+
+        const targetRole = member.roles.cache.find(r => r.name === roleName);
+        if (!targetRole) {
+            return interaction.reply({
+                content: `❌ У тебе немає ролі "${roleName}".`,
+                ephemeral: true
+            });
+        }
+
+        const attachment = interaction.options.getAttachment?.('файл') || interaction.attachments?.first();
+        if (!attachment) {
+            return interaction.reply({
+                content: '❌ Прикріпи `.mp3` або `.ogg` файл разом із командою.',
+                ephemeral: true
+            });
+        }
+
+        const extension = path.extname(attachment.name || '').toLowerCase();
+        if (!['.mp3', '.ogg'].includes(extension)) {
+            return interaction.reply({
+                content: '❌ Підтримуються лише `.mp3` або `.ogg` файли.',
+                ephemeral: true
+            });
+        }
+
+        const oldMp3 = path.join(__dirname, 'mp3', `${roleName}.mp3`);
+        const oldOgg = path.join(__dirname, 'mp3', `${roleName}.ogg`);
+        if (fs.existsSync(oldMp3)) fs.unlinkSync(oldMp3);
+        if (fs.existsSync(oldOgg)) fs.unlinkSync(oldOgg);
+
+        const filePath = path.join(__dirname, 'mp3', `${roleName}${extension}`);
+
+        try {
+            await interaction.deferReply({ ephemeral: true });
+            const response = await axios.get(attachment.url, { responseType: 'stream' });
+            const writer = fs.createWriteStream(filePath);
+            response.data.pipe(writer);
+
+            writer.on('finish', () => {
+                interaction.editReply(`✅ Аудіо для ролі **${roleName}** оновлено!`);
+            });
+
+            writer.on('error', err => {
+                console.error('❌ Помилка запису:', err);
+                interaction.editReply('❌ Не вдалося зберегти файл.');
+            });
+        } catch (err) {
+            console.error('❌ Помилка завантаження:', err);
+            interaction.reply({
+                content: '❌ Не вдалося завантажити файл.',
+                ephemeral: true
+            });
         }
     }
 });
