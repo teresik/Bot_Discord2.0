@@ -136,7 +136,15 @@ client.on('messageCreate', async (message) => {
             return message.reply('❌ Только .mp3 или .ogg файлы поддерживаются.');
         }
 
+        // Удаление старых файлов для роли перед сохранением нового
+        const oldMp3 = path.join(__dirname, 'mp3', `${roleName}.mp3`);
+        const oldOgg = path.join(__dirname, 'mp3', `${roleName}.ogg`);
+
+        if (fs.existsSync(oldMp3)) fs.unlinkSync(oldMp3);
+        if (fs.existsSync(oldOgg)) fs.unlinkSync(oldOgg);
+
         const filePath = path.join(__dirname, 'mp3', `${roleName}${extension}`);
+
 
         try {
             const response = await axios.get(attachment.url, { responseType: 'stream' });
