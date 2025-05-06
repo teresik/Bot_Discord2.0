@@ -24,8 +24,31 @@ const client = new Client({
     ]
 });
 
+const AUTO_DELETE_CHANNEL_ID = '1369413651416748104'; // Заміни на ID твого каналу
+const DELETE_INTERVAL_MS = 60 * 60 * 1000; // Щогодини (1 година)
+
 client.once('ready', () => {
     console.log(`✅ Бот запущен как ${client.user.tag}`);
+
+    // Запускаємо інтервал для перевірки
+    setInterval(async () => {
+        const channel = await client.channels.fetch(AUTO_DELETE_CHANNEL_ID);
+        if (!channel.isTextBased()) return;
+
+        try {
+            const messages = await channel.messages.fetch({ limit: 100 });
+
+            const now = Date.now();
+            messages.forEach(msg => {
+                const age = now - msg.createdTimestamp;
+                if (age > 24 * 60 * 60 * 1000) { // 24 години
+                    msg.delete().catch(err => console.error('❌ Помилка видалення:', err));
+                }
+            });
+        } catch (err) {
+            console.error('❗ Помилка при автоочистці:', err);
+        }
+    }, DELETE_INTERVAL_MS);
 });
 
 // 🎧 Воспроизведение при входе в голосовой канал
