@@ -24,14 +24,14 @@ const client = new Client({
 // ========== SLASH-КОМАНДА /clean ==========
 const commands = [
     new SlashCommandBuilder()
-        .setName('clean')
-        .setDescription('🧹 Очистити останні повідомлення')
-        .addIntegerOption(option =>
-            option.setName('кількість')
-                .setDescription('Скільки повідомлень видалити (1–100)')
+        .setName('addvoice')
+        .setDescription('🎧 Прив’язати звук до своєї ролі')
+        .addStringOption(option =>
+            option.setName('роль')
+                .setDescription('Назва ролі, до якої прив’язати звук')
                 .setRequired(true)
         )
-        .toJSON()
+        .toJSON(),
 ];
 
 // ========== ПРИ ЗАПУСКУ ==========
@@ -136,31 +136,58 @@ client.on('messageCreate', async (message) => {
 🔊 Бот програє звук при вході в голосовий канал, якщо у тебе є відповідна роль.
 
 🎧 **Команда:**
-\`!додати <названня_ролі>\` — прикріпи .mp3 або .ogg файл, який буде програватися при вході.
+\`/addvoice <названня_ролі>\` — прикріпи .mp3 або .ogg файл, який буде програватися при вході.
 
 📌 **Приклад:**
-\`!додати Бодя\` + аудіофайл
+\`/addvoice Бодя\` + аудіофайл
 
 🔒 Можна лише для власних ролей.
+🔁 Повторне відправлення — замінює попередній звук
+
+---
+
+🧹 **Slash-команда очищення чату:**
+\`/clean\` кількість: 50
+
+🧼 Видаляє останні **X повідомлень** (до 100 за раз) у поточному каналі.
+
+⚠️ Працює лише для повідомлень **не старших за 14 днів**  
+🔐 Необхідні права: \`Manage Messages\`
+
+---
+
+✉️ Напиши `/` у чаті, щоб побачити доступні Slash-команди з підказками!
+
         `);
     }
 
-    if (message.content.startsWith('!addvoice')) {
-        const args = message.content.split(' ');
-        const roleName = args.slice(1).join(' ').trim();
-        if (!roleName) return message.reply('❌ Укажи назву ролі. Приклад: `!addvoice Бодя`');
+    if (interaction.commandName === 'addvoice') {
+        const roleName = interaction.options.getString('роль');
+        const member = interaction.member;
 
-        const member = message.member;
         const targetRole = member.roles.cache.find(r => r.name === roleName);
-        if (!targetRole) return message.reply(`❌ У тебе немає ролі "${roleName}"`);
+        if (!targetRole) {
+            return interaction.reply({
+                content: `❌ У тебе немає ролі "${roleName}".`,
+                ephemeral: true
+            });
+        }
 
-        if (message.attachments.size === 0)
-            return message.reply('❌ Прикріпи `.mp3` або `.ogg` файл.');
+        const attachment = interaction.options.getAttachment?.('файл') || interaction.attachments?.first();
+        if (!attachment) {
+            return interaction.reply({
+                content: '❌ Прикріпи `.mp3` або `.ogg` файл разом із командою.',
+                ephemeral: true
+            });
+        }
 
-        const attachment = message.attachments.first();
         const extension = path.extname(attachment.name || '').toLowerCase();
-        if (!['.mp3', '.ogg'].includes(extension))
-            return message.reply('❌ Підтримуються лише .mp3 або .ogg');
+        if (!['.mp3', '.ogg'].includes(extension)) {
+            return interaction.reply({
+                content: '❌ Підтримуються лише `.mp3` або `.ogg` файли.',
+                ephemeral: true
+            });
+        }
 
         const oldMp3 = path.join(__dirname, 'mp3', `${roleName}.mp3`);
         const oldOgg = path.join(__dirname, 'mp3', `${roleName}.ogg`);
@@ -170,21 +197,25 @@ client.on('messageCreate', async (message) => {
         const filePath = path.join(__dirname, 'mp3', `${roleName}${extension}`);
 
         try {
+            await interaction.deferReply({ ephemeral: true });
             const response = await axios.get(attachment.url, { responseType: 'stream' });
             const writer = fs.createWriteStream(filePath);
             response.data.pipe(writer);
 
             writer.on('finish', () => {
-                message.reply(`✅ Аудіо для ролі **${roleName}** оновлено!`);
+                interaction.editReply(`✅ Аудіо для ролі **${roleName}** оновлено!`);
             });
 
             writer.on('error', err => {
                 console.error('❌ Помилка запису:', err);
-                message.reply('❌ Не вдалося зберегти файл.');
+                interaction.editReply('❌ Не вдалося зберегти файл.');
             });
         } catch (err) {
             console.error('❌ Помилка завантаження:', err);
-            message.reply('❌ Не вдалося завантажити файл.');
+            interaction.reply({
+                content: '❌ Не вдалося завантажити файл.',
+                ephemeral: true
+            });
         }
     }
 });
@@ -193,7 +224,7 @@ client.on('messageCreate', async (message) => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    if (interaction.commandName === '!clean') {
+    if (interaction.commandName === 'clean') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
             return interaction.reply({
                 content: '❌ У тебе немає прав на очищення повідомлень.',
