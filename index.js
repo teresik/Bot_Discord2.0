@@ -6,60 +6,57 @@ const {
     AudioPlayerStatus
 } = require('@discordjs/voice');
 const path = require('path');
+const fs = require('fs');
+const axios = require('axios');
+
 
 require('dotenv').config();
 const TOKEN = process.env.TOKEN;
 
-// Создание клиента с нужными интентами
+// Создание клиента
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.GuildMembers // Чтобы бот видел роли
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
     ]
 });
-
 
 client.once('ready', () => {
     console.log(`✅ Бот запущен как ${client.user.tag}`);
 });
 
-// Когда кто-то заходит в голосовой канал
+// 🎧 Воспроизведение при входе в голосовой канал
 client.on('voiceStateUpdate', async (oldState, newState) => {
-    // Если это вход в канал
     if (!oldState.channel && newState.channel) {
         const member = newState.member;
         const channel = newState.channel;
 
-        // Пропускаем, если это бот
         if (member.user.bot) return;
 
-        // Привязка ролей к файлам
-        const roleAudioMap = {
-            'Мікола': 'kolya.mp3',
-            'Бодя': 'bodya.mp3',
-            'Егор': 'egor.mp3',
-            'Славік': 'slavik.mp3',
-            'Вадік': 'vadik.mp3',
-            'Діма': 'dima.mp3',
-            'Даня': 'danya.mp3',
-        };
+        await member.fetch(); // Загрузка ролей
 
         let audioFile = null;
 
-        for (const [roleName, fileName] of Object.entries(roleAudioMap)) {
-            if (member.roles.cache.some(role => role.name === roleName)) {
-                audioFile = fileName;
+        for (const role of member.roles.cache.values()) {
+            const mp3Path = path.join(__dirname, 'mp3', `${role.name}.mp3`);
+            const oggPath = path.join(__dirname, 'mp3', `${role.name}.ogg`);
+
+            if (fs.existsSync(mp3Path)) {
+                audioFile = mp3Path;
+                break;
+            } else if (fs.existsSync(oggPath)) {
+                audioFile = oggPath;
                 break;
             }
         }
 
         if (!audioFile) {
-            console.log(`❌ ${member.user.tag} — нет подходящей роли`);
+            console.log(`❌ ${member.user.tag} — нет аудиофайла по ролям`);
             return;
         }
-
-        const filePath = path.join(__dirname, 'mp3', audioFile);
 
         try {
             const connection = joinVoiceChannel({
@@ -70,7 +67,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             });
 
             const player = createAudioPlayer();
-            const resource = createAudioResource(filePath);
+            const resource = createAudioResource(audioFile);
             player.play(resource);
             connection.subscribe(player);
 
@@ -84,10 +81,86 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     }
 });
 
-// Обработка необработанных ошибок
+// 💬 Команда !добавить <роль> с прикреплённым файлом
+client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+
+    const content = message.content.trim().toLowerCase();
+
+    // Показ справки
+    if (content === '!help' || content === '!info') {
+        return message.reply(`
+📢 **Voice Role Bot — справка**
+
+🔊 Бот проигрывает звук при заходе в голосовой канал, если у вас есть роль с привязанным аудио.
+
+🎧 **Команда:**
+\`!добавить <название_роли>\` — прикрепите .mp3 или .ogg файл, и он будет воспроизводиться, когда вы заходите в голосовой канал.
+
+📌 **Примеры:**
+\`!добавить Бодя\` + прикреплённый файл
+
+🎵 Поддерживаются форматы: \`.mp3\`, \`.ogg\`
+
+🔒 Можно привязывать звук **только к своим ролям**
+💡 Можно заменить звук, отправив новый файл
+
+Чтобы проверить, сработает ли — просто перезайди в голосовой канал 😎
+        `);
+    }
+
+    // Команда !добавить <роль>
+    if (message.content.startsWith('!добавить')) {
+        const args = message.content.split(' ');
+        const roleName = args.slice(1).join(' ').trim();
+
+        if (!roleName) {
+            return message.reply('❌ Укажи название роли. Пример: `!добавить Бодя`');
+        }
+
+        const member = message.member;
+        const targetRole = member.roles.cache.find(r => r.name === roleName);
+
+        if (!targetRole) {
+            return message.reply(`❌ У тебя нет роли "${roleName}"`);
+        }
+
+        if (message.attachments.size === 0) {
+            return message.reply('❌ Прикрепи `.mp3` или `.ogg` файл к сообщению.');
+        }
+
+        const attachment = message.attachments.first();
+        const extension = path.extname(attachment.name || '').toLowerCase();
+
+        if (!['.mp3', '.ogg'].includes(extension)) {
+            return message.reply('❌ Только .mp3 или .ogg файлы поддерживаются.');
+        }
+
+        const filePath = path.join(__dirname, 'mp3', `${roleName}${extension}`);
+
+        try {
+            const response = await axios.get(attachment.url, { responseType: 'stream' });
+            const writer = fs.createWriteStream(filePath);
+            response.data.pipe(writer);
+
+            writer.on('finish', () => {
+                message.reply(`✅ Аудио для роли **${roleName}** успешно обновлено!`);
+            });
+
+            writer.on('error', (err) => {
+                console.error('❌ Ошибка записи файла:', err);
+                message.reply('❌ Не удалось сохранить файл.');
+            });
+        } catch (err) {
+            console.error('❌ Ошибка загрузки файла:', err);
+            message.reply('❌ Не удалось загрузить файл.');
+        }
+    }
+});
+
+// Обработка ошибок
 process.on('unhandledRejection', err => {
     console.error('❗ Необработанная ошибка:', err);
 });
 
-// Запуск
 client.login(TOKEN);
