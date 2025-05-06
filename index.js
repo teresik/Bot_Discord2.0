@@ -145,10 +145,10 @@ client.on('messageCreate', async (message) => {
         `);
     }
 
-    if (message.content.startsWith('!добавить')) {
+    if (message.content.startsWith('!addvoice')) {
         const args = message.content.split(' ');
         const roleName = args.slice(1).join(' ').trim();
-        if (!roleName) return message.reply('❌ Укажи назву ролі. Приклад: `!добавить Бодя`');
+        if (!roleName) return message.reply('❌ Укажи назву ролі. Приклад: `!addvoice Бодя`');
 
         const member = message.member;
         const targetRole = member.roles.cache.find(r => r.name === roleName);
@@ -193,8 +193,7 @@ client.on('messageCreate', async (message) => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    if (interaction.commandName === 'clean') {
-        const count = interaction.options.getInteger('кількість');
+    if (interaction.commandName === '!clean') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
             return interaction.reply({
                 content: '❌ У тебе немає прав на очищення повідомлень.',
@@ -202,18 +201,28 @@ client.on('interactionCreate', async interaction => {
             });
         }
 
+        const count = interaction.options.getInteger('кількість');
+
+        await interaction.deferReply({ ephemeral: true });
+
+        let deleted = 0;
         try {
-            await interaction.channel.bulkDelete(count, true);
-            await interaction.reply({
-                content: `✅ Видалено ${count} повідомлень.`,
-                ephemeral: true
-            });
+            let fetched;
+            do {
+                fetched = await interaction.channel.messages.fetch({ limit: 100 });
+                const deletable = fetched.filter(msg => (Date.now() - msg.createdTimestamp) < 14 * 24 * 60 * 60 * 1000);
+
+                if (deletable.size === 0) break;
+
+                const deletedBatch = await interaction.channel.bulkDelete(deletable, true);
+                deleted += deletedBatch.size;
+            } while (deleted < count);
+
+            await interaction.editReply(`✅ Видалено приблизно ${deleted} повідомлень.`);
+
         } catch (err) {
             console.error('❌ Помилка очищення:', err);
-            interaction.reply({
-                content: '❌ Не вдалося очистити повідомлення.',
-                ephemeral: true
-            });
+            await interaction.editReply('❌ Сталася помилка при очищенні.');
         }
     }
 });
