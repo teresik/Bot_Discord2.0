@@ -47,11 +47,28 @@ const commands = [
             option.setName('кількість')
                 .setDescription('Скільки повідомлень видалити (1–100)')
                 .setRequired(true)
-        )
+        ),
+
+    new SlashCommandBuilder()
+        .setName('removevoice')
+        .setDescription('❌ Видалити прив\'язаний аудіофайл для ролі')
+        .addStringOption(option =>
+            option.setName('роль')
+                .setDescription('Назва ролі, для якої видалити звук')
+                .setRequired(true)
+        ),
+
 ].map(command => command.toJSON());
 
 client.once('ready', async () => {
     console.log(`✅ Бот запущено як ${client.user.tag}`);
+
+    // Перевіряємо наявність директорії mp3, якщо немає - створюємо
+    const mp3Dir = path.join(__dirname, 'mp3');
+    if (!fs.existsSync(mp3Dir)) {
+        fs.mkdirSync(mp3Dir, { recursive: true });
+        console.log('📁 Створено директорію для аудіофайлів');
+    }
 
     const rest = new REST({ version: '10' }).setToken(TOKEN);
 
@@ -65,49 +82,106 @@ client.once('ready', async () => {
         console.error('❌ Помилка реєстрації команд:', err);
     }
 
-    setInterval(async () => {
-        const channel = await client.channels.fetch(AUTO_DELETE_CHANNEL_ID);
-        if (!channel.isTextBased()) return;
-
+    // Функція для автоматичного видалення старих повідомлень
+    const autoDeleteMessages = async () => {
         try {
+            const channel = await client.channels.fetch(AUTO_DELETE_CHANNEL_ID);
+            if (!channel || !channel.isTextBased()) {
+                console.warn('⚠️ Канал для автовидалення не знайдено або він не є текстовим');
+                return;
+            }
+            
+            console.log(`🕒 Запуск перевірки старих повідомлень у каналі #${channel.name}`);
+            
+            // Отримуємо останні 100 повідомлень
             const messages = await channel.messages.fetch({ limit: 100 });
             const now = Date.now();
+            const oldMessages = [];
+            
+            // Збираємо старі повідомлення
             messages.forEach(msg => {
                 const age = now - msg.createdTimestamp;
+                // Видаляємо повідомлення старші 24 годин
                 if (age > 24 * 60 * 60 * 1000) {
-                    msg.delete().catch(err => console.error('❌ Помилка видалення:', err));
+                    oldMessages.push(msg);
                 }
             });
+            
+            if (oldMessages.length > 0) {
+                console.log(`🧹 Видаляю ${oldMessages.length} старих повідомлень...`);
+                
+                // Видаляємо повідомлення по одному, щоб уникнути помилок
+                for (const msg of oldMessages) {
+                    await msg.delete().catch(err => 
+                        console.error(`❌ Помилка видалення повідомлення ${msg.id}:`, err.message)
+                    );
+                    // Короткий таймаут, щоб уникнути обмежень rate limit API Discord
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                console.log(`✅ Видалено ${oldMessages.length} повідомлень з каналу #${channel.name}`);
+            } else {
+                console.log(`✅ Немає старих повідомлень для видалення в каналі #${channel.name}`);
+            }
         } catch (err) {
             console.error('❗ Помилка при автоочистці:', err);
         }
-    }, DELETE_INTERVAL_MS);
+    };
+    
+    // Запускаємо автовидалення за розкладом
+    setInterval(autoDeleteMessages, DELETE_INTERVAL_MS);
+    
+    // Також запускаємо перший раз одразу після запуску бота (через 1 хвилину)
+    setTimeout(autoDeleteMessages, 60 * 1000);
 });
 
 client.on('voiceStateUpdate', async (oldState, newState) => {
+    // Користувач приєднався до голосового каналу
     if (!oldState.channel && newState.channel) {
         const member = newState.member;
+        
+        // Ігноруємо ботів
         if (member.user.bot) return;
 
-        await member.fetch();
-        let audioFile = null;
-
-        for (const role of member.roles.cache.values()) {
-            const mp3Path = path.join(__dirname, 'mp3', `${role.name}.mp3`);
-            const oggPath = path.join(__dirname, 'mp3', `${role.name}.ogg`);
-
-            if (fs.existsSync(mp3Path)) {
-                audioFile = mp3Path;
-                break;
-            } else if (fs.existsSync(oggPath)) {
-                audioFile = oggPath;
-                break;
-            }
-        }
-
-        if (!audioFile) return;
-
         try {
+            // Оновлюємо інформацію про користувача
+            await member.fetch();
+            
+            // Шукаємо аудіофайл для ролей користувача
+            let audioFile = null;
+            let roleName = null;
+
+            // Директорія з аудіофайлами
+            const mp3Dir = path.join(__dirname, 'mp3');
+            
+            // Перевіряємо наявність директорії
+            if (!fs.existsSync(mp3Dir)) {
+                console.warn('⚠️ Директорія з аудіофайлами не існує');
+                return;
+            }
+
+            // Перебираємо всі ролі користувача
+            for (const role of member.roles.cache.values()) {
+                const mp3Path = path.join(mp3Dir, `${role.name}.mp3`);
+                const oggPath = path.join(mp3Dir, `${role.name}.ogg`);
+
+                if (fs.existsSync(mp3Path)) {
+                    audioFile = mp3Path;
+                    roleName = role.name;
+                    break;
+                } else if (fs.existsSync(oggPath)) {
+                    audioFile = oggPath;
+                    roleName = role.name;
+                    break;
+                }
+            }
+
+            // Якщо не знайдено аудіофайл для жодної з ролей
+            if (!audioFile) return;
+            
+            console.log(`🔊 Відтворюю звук для ролі "${roleName}" користувачу ${member.user.tag}`);
+
+            // Підключаємося до голосового каналу
             const connection = joinVoiceChannel({
                 channelId: newState.channel.id,
                 guildId: newState.guild.id,
@@ -115,14 +189,36 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                 selfDeaf: false
             });
 
+            // Створюємо аудіоплеєр і ресурс
             const player = createAudioPlayer();
             const resource = createAudioResource(audioFile);
+            
+            // Обробка помилок при відтворенні
+            player.on('error', error => {
+                console.error(`❌ Помилка аудіоплеєра для ${member.user.tag}:`, error);
+                connection.destroy();
+            });
+            
+            // Відтворюємо звук
             player.play(resource);
             connection.subscribe(player);
 
-            player.on(AudioPlayerStatus.Idle, () => connection.destroy());
+            // Відключаємося, коли звук закінчиться
+            player.on(AudioPlayerStatus.Idle, () => {
+                console.log(`✅ Звук відтворено для користувача ${member.user.tag}`);
+                connection.destroy();
+            });
+            
+            // Встановлюємо таймаут на випадок, якщо щось пішло не так
+            setTimeout(() => {
+                if (connection.state.status !== 'destroyed') {
+                    console.log(`⚠️ Таймаут з'єднання для ${member.user.tag}`);
+                    connection.destroy();
+                }
+            }, 30000); // 30 секунд максимального часу відтворення
+            
         } catch (err) {
-            console.error('❗ Помилка відтворення звуку:', err);
+            console.error(`❗ Помилка відтворення звуку для ${member.user.tag}:`, err);
         }
     }
 });
@@ -165,37 +261,38 @@ client.on('interactionCreate', async interaction => {
         }
 
         // Отримуємо кількість повідомлень для видалення з опцій команди
-        const count = interaction.options.getInteger('кількість');
-
+        let count = interaction.options.getInteger('кількість');
+        
+        // Обмежуємо кількість повідомлень від 1 до 100
+        if (count < 1) count = 1;
+        if (count > 100) count = 100;
+    
         // Відкладаємо відповідь, оскільки операція може зайняти час
         await interaction.deferReply({ ephemeral: true });
-
-        let deleted = 0;
+    
         try {
-            let fetched;
-            // Цикл для отримання і видалення повідомлень партіями по 100
-            do {
-                // Отримуємо пакет повідомлень (максимум 100)
-                fetched = await interaction.channel.messages.fetch({ limit: 100 });
-                
-                // Фільтруємо тільки ті повідомлення, які не старіші 14 днів (обмеження Discord API)
-                const deletable = fetched.filter(msg => (Date.now() - msg.createdTimestamp) < 14 * 24 * 60 * 60 * 1000);
-
-                // Якщо немає повідомлень для видалення, виходимо з циклу
-                if (deletable.size === 0) break;
-
-                // Видаляємо повідомлення пакетом
-                const deletedBatch = await interaction.channel.bulkDelete(deletable, true);
-                deleted += deletedBatch.size;
-            } while (deleted < count); // Продовжуємо, поки не видалимо потрібну кількість повідомлень
-
+            // Отримуємо повідомлення (максимум count+1, щоб не видаляти команду)
+            const messages = await interaction.channel.messages.fetch({ limit: count + 1 });
+            
+            // Фільтруємо тільки ті повідомлення, які не старіші 14 днів (обмеження Discord API)
+            const deletable = messages.filter(msg => 
+                (Date.now() - msg.createdTimestamp) < 14 * 24 * 60 * 60 * 1000 &&
+                msg.id !== interaction.id
+            ).first(count);
+            
+            if (deletable.length === 0) {
+                return interaction.editReply('ℹ️ Немає повідомлень для видалення (всі повідомлення старіші 14 днів).');
+            }
+            
+            // Видаляємо повідомлення пакетом
+            const deleted = await interaction.channel.bulkDelete(deletable, true);
+            
             // Повідомляємо про успішне видалення
-            await interaction.editReply(`✅ Видалено приблизно ${deleted} повідомлень.`);
-
+            await interaction.editReply(`✅ Видалено ${deleted.size} повідомлень.`);
         } catch (err) {
             // Обробка помилок при видаленні
             console.error('❌ Помилка очищення:', err);
-            await interaction.editReply('❌ Сталася помилка при очищенні.');
+            await interaction.editReply('❌ Сталася помилка при очищенні. Можливо, повідомлення старіші за 14 днів.');
         }
     }
     
@@ -214,15 +311,15 @@ client.on('interactionCreate', async interaction => {
             });
         }
 
-        // Шукаємо прикріплений файл у різних можливих джерелах
-        const attachment = interaction.options.getAttachment?.('файл') || interaction.attachments?.first();
+        // Шукаємо прикріплений файл
+        const attachment = interaction.options.getAttachment('файл');
         if (!attachment) {
             return interaction.reply({
                 content: '❌ Прикріпи `.mp3` або `.ogg` файл разом із командою.',
                 ephemeral: true
             });
         }
-
+    
         // Перевіряємо розширення файлу
         const extension = path.extname(attachment.name || '').toLowerCase();
         if (!['.mp3', '.ogg'].includes(extension)) {
@@ -231,43 +328,128 @@ client.on('interactionCreate', async interaction => {
                 ephemeral: true
             });
         }
-
-        // Видаляємо старі файли з цією назвою ролі, якщо вони існують
-        const oldMp3 = path.join(__dirname, 'mp3', `${roleName}.mp3`);
-        const oldOgg = path.join(__dirname, 'mp3', `${roleName}.ogg`);
-        if (fs.existsSync(oldMp3)) fs.unlinkSync(oldMp3);
-        if (fs.existsSync(oldOgg)) fs.unlinkSync(oldOgg);
-
-        // Шлях для збереження нового файлу
-        const filePath = path.join(__dirname, 'mp3', `${roleName}${extension}`);
-
-        try {
-            // Відкладаємо відповідь, оскільки завантаження файлу може зайняти час
-            await interaction.deferReply({ ephemeral: true });
-            
-            // Завантажуємо файл з URL вкладення
-            const response = await axios.get(attachment.url, { responseType: 'stream' });
-            
-            // Створюємо потік для запису файлу
-            const writer = fs.createWriteStream(filePath);
-            response.data.pipe(writer);
-
-            // Обробляємо успішне завершення запису файлу
-            writer.on('finish', () => {
-                interaction.editReply(`✅ Аудіо для ролі **${roleName}** оновлено!`);
-            });
-
-            // Обробляємо помилки при записі файлу
-            writer.on('error', err => {
-                console.error('❌ Помилка запису:', err);
-                interaction.editReply('❌ Не вдалося зберегти файл.');
-            });
-        } catch (err) {
-            // Обробка помилок при завантаженні файлу
-            console.error('❌ Помилка завантаження:', err);
-            interaction.reply({
-                content: '❌ Не вдалося завантажити файл.',
+    
+        // Перевіряємо розмір файлу (максимум 2 MB)
+        const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
+        if (attachment.size > MAX_FILE_SIZE) {
+            return interaction.reply({
+                content: '❌ Розмір файлу перевищує 2 MB. Будь ласка, зменшіть розмір аудіофайлу.',
                 ephemeral: true
+            });
+        }
+    
+        // Відкладаємо відповідь, оскільки завантаження файлу може зайняти час
+        await interaction.deferReply({ ephemeral: true });
+    
+        // Шлях для збереження нового файлу
+        const mp3Dir = path.join(__dirname, 'mp3');
+        
+        // Перевіряємо наявність директорії, якщо немає - створюємо
+        if (!fs.existsSync(mp3Dir)) {
+            fs.mkdirSync(mp3Dir, { recursive: true });
+        }
+    
+        // Видаляємо старі файли з цією назвою ролі, якщо вони існують
+        const oldMp3 = path.join(mp3Dir, `${roleName}.mp3`);
+        const oldOgg = path.join(mp3Dir, `${roleName}.ogg`);
+        
+        try {
+            if (fs.existsSync(oldMp3)) fs.unlinkSync(oldMp3);
+            if (fs.existsSync(oldOgg)) fs.unlinkSync(oldOgg);
+        } catch (err) {
+            console.error('❌ Помилка при видаленні старого файлу:', err);
+            // Продовжуємо виконання, навіть якщо видалення не вдалося
+        }
+    
+        const filePath = path.join(mp3Dir, `${roleName}${extension}`);
+    
+        try {
+            // Завантажуємо файл з URL вкладення
+            const response = await axios.get(attachment.url, { 
+                responseType: 'arraybuffer',
+                timeout: 10000 // 10 секунд на таймаут
+            });
+            
+            // Записуємо файл синхронно для уникнення колбеків
+            fs.writeFileSync(filePath, Buffer.from(response.data));
+            
+            // Повідомляємо про успіх
+            await interaction.editReply(`✅ Аудіо для ролі **${roleName}** успішно оновлено!`);
+            
+        } catch (err) {
+            console.error('❌ Помилка завантаження/запису файлу:', err);
+            await interaction.editReply({
+                content: '❌ Не вдалося завантажити або зберегти файл. Спробуйте ще раз пізніше.',
+            });
+        }
+    }
+    
+    else if (interaction.commandName === 'removevoice') {
+        const roleName = interaction.options.getString('роль');
+        const member = interaction.member;
+
+        // Перевіряємо, чи користувач має роль "Майстер над Ботами" або свою власну роль
+        const hasPermissionRole = member.roles.cache.some(role => 
+            role.name === 'Майстер над Ботами' || role.name === roleName
+        );
+        
+        if (!hasPermissionRole) {
+            return interaction.reply({
+                content: '❌ У тебе немає прав для видалення аудіо. Ти можеш видалити аудіо лише для своїх ролей або якщо ти **Майстер над Ботами**.',
+                ephemeral: true
+            });
+        }
+    
+        // Відкладаємо відповідь для впевненості в успішному виконанні
+        await interaction.deferReply({ ephemeral: true });
+        
+        const mp3Dir = path.join(__dirname, 'mp3');
+        
+        // Перевіряємо наявність директорії mp3
+        if (!fs.existsSync(mp3Dir)) {
+            return interaction.editReply({
+                content: `❌ Директорія з аудіофайлами не існує.`,
+            });
+        }
+        
+        const mp3Path = path.join(mp3Dir, `${roleName}.mp3`);
+        const oggPath = path.join(mp3Dir, `${roleName}.ogg`);
+    
+        const mp3Exists = fs.existsSync(mp3Path);
+        const oggExists = fs.existsSync(oggPath);
+    
+        if (!mp3Exists && !oggExists) {
+            return interaction.editReply({
+                content: `ℹ️ Для ролі **${roleName}** не знайдено жодного аудіофайлу.`,
+            });
+        }
+    
+        try {
+            let deleted = false;
+            
+            if (mp3Exists) {
+                fs.unlinkSync(mp3Path);
+                deleted = true;
+            }
+            
+            if (oggExists) {
+                fs.unlinkSync(oggPath);
+                deleted = true;
+            }
+    
+            if (deleted) {
+                return interaction.editReply({
+                    content: `✅ Аудіо для ролі **${roleName}** успішно видалено.`,
+                });
+            } else {
+                return interaction.editReply({
+                    content: `ℹ️ Не вдалося знайти аудіофайл для ролі **${roleName}**.`,
+                });
+            }
+        } catch (err) {
+            console.error('❌ Помилка при видаленні файлу:', err);
+            return interaction.editReply({
+                content: '❌ Сталася помилка при видаленні файлу.',
             });
         }
     }
