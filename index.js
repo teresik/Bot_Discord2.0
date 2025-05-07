@@ -389,13 +389,11 @@ client.on('interactionCreate', async interaction => {
         const member = interaction.member;
 
         // Перевіряємо, чи користувач має роль "Майстер над Ботами" або свою власну роль
-        const hasPermissionRole = member.roles.cache.some(role => 
-            role.name === 'Майстер над Ботами' || role.name === roleName
-        );
-        
-        if (!hasPermissionRole) {
+        const isMaster = member.roles.cache.some(role => role.name === 'Майстер над Ботами');
+
+        if (!isMaster) {
             return interaction.reply({
-                content: '❌ У тебе немає прав для видалення аудіо. Ти можеш видалити аудіо лише для своїх ролей або якщо ти **Майстер над Ботами**.',
+                content: '❌ Лише користувачі з роллю **Майстер над Ботами** можуть видаляти аудіофайли.',
                 ephemeral: true
             });
         }
